@@ -9,15 +9,15 @@ import random
 
 # 超参数
 lr = 0.0005
-epochs = 2500
-e_dim = 200 # 三元组模态实体嵌入维度
+epochs = 2000
+e_dim = 256 # 三元组模态实体嵌入维度
 r_dim = 256 # 所有模态的关系嵌入维度
 dataset_path = '/kaggle/input/momok-dataset/DB15K/'
 batch_size = 1024
 K = 3 # 专家数
 mu = 0.0001
 eval_freq = 100
-sparse_ratio = 0.05 # 稀疏场景舍弃的数据比例
+sparse_ratio = 0.20 # 稀疏场景舍弃的数据比例
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("device: ", device)
@@ -67,8 +67,8 @@ for epoch in train_epochs:
         batch_triples = torch.LongTensor(batch_triples)
         batch_triples = batch_triples.to(device)
         batch_values = batch_values.to(device)
-        pred_sco, experts_embs = mujod_model.forward(batch_triples)
-        mujod_loss = mujod_model.loss_kgc(pred_sco, batch_values) + mu * exid_model(experts_embs) # 提高预测准度以及降低模态内专家互信息
+        pred_sco, experts_embs, modal_embs = mujod_model.forward(batch_triples)
+        mujod_loss = mujod_model.compute_total_loss(pred_sco, batch_values, modal_embs ) + mu * exid_model(experts_embs) # 提高预测准度以及降低模态内专家互信息
         mujod_loss.backward()
         mujod_optimizer.step()
 

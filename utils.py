@@ -39,6 +39,7 @@ def get_data(path, sparse_ratio):
             train_triples.append((e2id[e1], r2id[r], e2id[e2]))
 
     # 稀疏处理
+    random.seed(42)
     total = len(train_triples)
     keep_num = int(total * (1 - sparse_ratio))
     train_triples = random.sample(train_triples, keep_num)
@@ -151,7 +152,7 @@ class TrainModel:
             head_batch_triples = torch.LongTensor([item['triple'] for item in head_batch])
             head_batch_triples = head_batch_triples.to(self.device)
 
-            pred_head_s, _ = model.forward(head_batch_triples) # 预测结果
+            pred_head_s, _, _ = model.forward(head_batch_triples) # 预测结果
             pred_head = (pred_head_s[0] + pred_head_s[1] + pred_head_s[2] + pred_head_s[3]) / 4.0  
 
             label = [np.int32(item['label']) for item in head_batch]
@@ -182,7 +183,7 @@ class TrainModel:
             tail_batch_triples = torch.LongTensor([item['triple'] for item in tail_batch])
             tail_batch_triples = tail_batch_triples.to(self.device)
 
-            pred_tail_s, _ = model.forward(tail_batch_triples) # 预测结果
+            pred_tail_s, _ , _= model.forward(tail_batch_triples) # 预测结果
             pred_tail = (pred_tail_s[0] + pred_tail_s[1] + pred_tail_s[2] + pred_tail_s[3]) / 4.0  
 
             label = [np.int32(item['label']) for item in tail_batch]

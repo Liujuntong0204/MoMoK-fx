@@ -1,3 +1,20 @@
+#  # 三元组模态
+#         self.modal1 = nn.ModuleList([
+#             nn.Sequential(nn.Dropout(p=0.2), nn.Linear(s_dim, out_dim), nn.ReLU()) 
+#             for _ in range(multi_head_num)
+#         ])
+#         # 图像模态
+#         self.modal2 = nn.ModuleList([
+#             nn.Sequential(nn.Dropout(p=0.2), nn.Linear(img_dim, out_dim), nn.ReLU()) 
+#             for _ in range(multi_head_num)
+#         ])
+#         # 文本模态
+#         self.modal3 = nn.ModuleList([
+#             nn.Sequential(nn.Dropout(p=0.2), nn.Linear(txt_dim, out_dim), nn.ReLU()) 
+#             for _ in range(multi_head_num)
+#         ])
+
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -53,34 +70,23 @@ class ModalFusionJ(nn.Module):
     def __init__(self, multi_head_num, s_dim, img_dim, txt_dim, out_dim):
         super(ModalFusionJ, self).__init__()
         self.multi_head_num = multi_head_num
-        self.s_dim = s_dim
-        self.img_dim = img_dim
-        self.txt_dim = txt_dim
         self.out_dim = out_dim
         
-        # 三元组模态 s_dim 
-        modal1_model = []
-        for i in range(self.multi_head_num):
-            dropout = nn.Dropout(p=0.2)
-            linear = nn.Linear(self.s_dim , self.out_dim)
-            modal1_model.append(nn.Sequential(dropout,linear,nn.ReLU()))
-        self.modal1 = nn.ModuleList(modal1_model)
-
-        # 图像模态 img_dim 
-        modal2_model = []
-        for i in range(self.multi_head_num):
-            dropout = nn.Dropout(p=0.2)
-            linear = nn.Linear(self.img_dim , self.out_dim)
-            modal2_model.append(nn.Sequential(dropout,linear,nn.ReLU()))
-        self.modal2 = nn.ModuleList(modal2_model)
-
-        # 文本模态 txt_dim 
-        modal3_model = []
-        for i in range(self.multi_head_num):
-            dropout = nn.Dropout(p=0.2)
-            linear = nn.Linear(self.txt_dim , self.out_dim)
-            modal3_model.append(nn.Sequential(dropout,linear,nn.ReLU()))
-        self.modal3 = nn.ModuleList(modal3_model)
+        # 三元组模态
+        self.modal1 = nn.ModuleList([
+            nn.Sequential(nn.Dropout(p=0.2), nn.Linear(s_dim, out_dim), nn.ReLU()) 
+            for _ in range(multi_head_num)
+        ])
+        # 图像模态
+        self.modal2 = nn.ModuleList([
+            nn.Sequential(nn.Dropout(p=0.2), nn.Linear(img_dim, out_dim), nn.ReLU()) 
+            for _ in range(multi_head_num)
+        ])
+        # 文本模态
+        self.modal3 = nn.ModuleList([
+            nn.Sequential(nn.Dropout(p=0.2), nn.Linear(txt_dim, out_dim), nn.ReLU()) 
+            for _ in range(multi_head_num)
+        ])
 
         # 注意力 融合权重
         self.attention = nn.Linear(self.out_dim, 1, bias=False)
@@ -102,6 +108,20 @@ class ModalFusionJ(nn.Module):
         embs = embs.sum(1).view(embs_num, self.out_dim) 
         return embs # 融合后的嵌入[embs_num, output_dims]
 
+# 模态间对比学习
+class ModalityContrastiveLoss(nn.Module):
+    def __init__(self, temperature=0.1):
+        super(ModalityContrastiveLoss, self).__init__()
+        self.temperature = temperature
+        
+    def forward(self, modality_embeddings):
+        emb_s = F.normalize(modality_embeddings[0], dim=1)  # 结构模态
+        emb_t = F.normalize(modality_embeddings[2], dim=1)  # 文本模态
+        sim_matrix = torch.mm(emb_s, emb_t.t()) / self.temperature
+        labels = torch.arange(emb_s.size(0), device=emb_s.device)
+        loss = (F.cross_entropy(sim_matrix, labels) +
+                F.cross_entropy(sim_matrix.t(), labels)) / 2
+        return loss
 
 # 预测模型 h,r -> t
 class PredTail(nn.Module): 
@@ -203,6 +223,9 @@ class MuJoD(nn.Module):
 
         # 二元交叉熵损失函数
         self.bceloss = nn.BCELoss() 
+        # 对比损失
+        self.contrastive_loss = ModalityContrastiveLoss(temperature=0.1)
+        self.contrastive_weight = 0.05  # 可以调整这个权重，建议从0.05开始
 
     def forward(self,batch_data):
         source_es = batch_data[:, 0]
@@ -245,7 +268,7 @@ class MuJoD(nn.Module):
         t_pred_sco = torch.sigmoid(t_pred_sco)
         j_pred_sco = torch.sigmoid(j_pred_sco)
 
-        return [s_pred_sco, i_pred_sco, t_pred_sco, j_pred_sco], [s_e_experts_embs, i_e_experts_embs, t_e_experts_embs]
+        return [s_pred_sco, i_pred_sco, t_pred_sco, j_pred_sco], [s_e_experts_embs, i_e_experts_embs, t_e_experts_embs], [s_e_embs, i_e_embs, t_e_embs, j_e_embs]
 
     # 获取所有专家学习嵌入 用于拟合嵌入分布
     def get_batch_embs(self, batch_data): 
@@ -261,3 +284,11 @@ class MuJoD(nn.Module):
         loss_t = self.bceloss(pred[2], target)
         loss_j = self.bceloss(pred[3], target)
         return loss_s + loss_i + loss_t + loss_j
+    
+    def compute_total_loss(self, pred_scores, target, modality_embs):
+        kgc_loss = self.loss_kgc(pred_scores, target)
+        # 对比学习损失
+        contrast_loss = self.contrastive_loss(modality_embs)
+        # 总损失
+        total_loss = kgc_loss + self.contrastive_weight * contrast_loss
+        return total_loss
